@@ -70,7 +70,7 @@ public class UdpClientFx extends Application {
         root.setStyle("-fx-background-color: white;");
 
         Scene scene = new Scene(root, 500, 600);
-        primaryStage.setTitle("UDP Мессенджер");
+        primaryStage.setTitle("Обмен дейтаграммами");
         primaryStage.setScene(scene);
         primaryStage.setOnCloseRequest(e -> {
             if (socket != null && !socket.isClosed()) socket.close();
@@ -89,11 +89,15 @@ public class UdpClientFx extends Application {
             listenerThread.setDaemon(true);
             listenerThread.start();
 
-            addTextMessage("Система", "Готов к работе. Отправьте первое сообщение, чтобы получать ответы от сервера.", "#888888");
+            byte[] initData = "HI|".getBytes(StandardCharsets.UTF_8);
+            socket.send(new DatagramPacket(initData, initData.length, serverAddress, PORT));
+
+            addTextMessage("Система", "Успешно подключено к серверу. Чат готов к работе!", "#888888");
         } catch (Exception e) {
             addTextMessage("Система", "Ошибка сети: " + e.getMessage(), "red");
         }
     }
+
 
     private void sendText() {
         String msg = inputField.getText().trim();
@@ -181,7 +185,7 @@ public class UdpClientFx extends Application {
             for (int i = 0; i < data.length; i++) {
                 if (data[i] == '|') {
                     pipeCount++;
-                    if (pipeCount == 4) {
+                    if (pipeCount == 5) {
                         headerEnd = i;
                         break;
                     }
@@ -195,6 +199,7 @@ public class UdpClientFx extends Application {
             String imageId = parts[1];
             int totalChunks = Integer.parseInt(parts[2]);
             int chunkIndex = Integer.parseInt(parts[3]);
+            String senderName = "Клиент [" + parts[4] + "]";
 
             byte[] chunkData = Arrays.copyOfRange(data, headerEnd + 1, data.length);
 
@@ -213,16 +218,14 @@ public class UdpClientFx extends Application {
                     }
                 }
 
-                addImageMessage("Собеседник", tempFile);
+                addImageMessage(senderName, tempFile);
 
-                // Очищаем память
                 receiveImageBuffers.remove(imageId);
             }
         } catch (Exception e) {
             System.err.println("Ошибка сборки картинки на клиенте: " + e.getMessage());
         }
     }
-
 
     private void addTextMessage(String sender, String text, String color) {
         Platform.runLater(() -> {

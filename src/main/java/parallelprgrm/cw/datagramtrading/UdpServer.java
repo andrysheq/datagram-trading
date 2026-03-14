@@ -38,14 +38,20 @@ public class UdpServer {
 
                 String clientInfo = packet.getAddress().getHostAddress() + ":" + packet.getPort();
 
-                if (header.startsWith("TXT|")) {
+                if (header.startsWith("HI|")) {
+                    System.out.println("Клиент " + clientInfo + " успешно зарегистрирован.");
+                    String welcomeMsg = "TXT|Система: Клиент [" + packet.getPort() + "] присоединился к чату!";
+                    broadcastMessage(socket, welcomeMsg, packet.getPort());
+                }
+
+                else if (header.startsWith("TXT|")) {
                     String message = new String(data, 4, data.length - 4, StandardCharsets.UTF_8);
                     System.out.println("Текст от " + clientInfo + ": " + message);
 
-                    // НОВОЕ: Рассылаем сообщение ВСЕМ остальным клиентам
                     String broadcastMsg = "TXT|Клиент [" + packet.getPort() + "]: " + message;
                     broadcastMessage(socket, broadcastMsg, packet.getPort());
                 }
+
                 else if (header.startsWith("IMG|")) {
                     processImageChunk(data, clientInfo, socket, packet);
                 }
@@ -79,13 +85,13 @@ public class UdpServer {
     }
 
     private static void processImageChunk(byte[] data, String clientInfo, DatagramSocket socket, DatagramPacket packet) {
-        // ... (ваш старый код processImageChunk без изменений) ...
         try {
             int headerEnd = -1;
             int pipeCount = 0;
             for (int i = 0; i < data.length; i++) {
                 if (data[i] == '|') {
                     pipeCount++;
+                    // Было 4, теперь ищем 4, так как клиент присылает IMG|id|total|index|
                     if (pipeCount == 4) {
                         headerEnd = i;
                         break;
@@ -100,13 +106,21 @@ public class UdpServer {
             String imageId = parts[1];
             int totalChunks = Integer.parseInt(parts[2]);
             int chunkIndex = Integer.parseInt(parts[3]);
+            int senderPort = packet.getPort(); // Получаем порт отправителя
 
             byte[] chunkData = Arrays.copyOfRange(data, headerEnd + 1, data.length);
 
             imageBuffers.putIfAbsent(imageId, new HashMap<>());
             imageBuffers.get(imageId).put(chunkIndex, chunkData);
 
-            broadcastImageChunk(socket, data, packet.getPort());
+            String newHeader = headerStr + "|" + senderPort + "|";
+            byte[] newHeaderBytes = newHeader.getBytes(StandardCharsets.UTF_8);
+
+            byte[] broadcastData = new byte[newHeaderBytes.length + chunkData.length];
+            System.arraycopy(newHeaderBytes, 0, broadcastData, 0, newHeaderBytes.length);
+            System.arraycopy(chunkData, 0, broadcastData, newHeaderBytes.length, chunkData.length);
+
+            broadcastImageChunk(socket, broadcastData, senderPort);
 
             if (imageBuffers.get(imageId).size() == totalChunks) {
                 saveImage(imageId, totalChunks);
