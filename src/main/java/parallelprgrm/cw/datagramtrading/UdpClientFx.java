@@ -5,6 +5,8 @@ import javafx.application.Platform;
 import javafx.geometry.Insets;
 import javafx.scene.Scene;
 import javafx.scene.control.*;
+import javafx.scene.image.Image;
+import javafx.scene.image.ImageView;
 import javafx.scene.layout.*;
 import javafx.stage.FileChooser;
 import javafx.stage.Stage;
@@ -21,17 +23,24 @@ public class UdpClientFx extends Application {
     private DatagramSocket socket;
     private InetAddress serverAddress;
     private static final int PORT = 9876;
-    private static final int CHUNK_SIZE = 8192; // 8 KB полезной нагрузки на пакет
+    private static final int CHUNK_SIZE = 8192;
 
-    private TextArea chatArea;
+    private VBox chatBox;
+    private ScrollPane scrollPane;
     private TextField inputField;
 
     @Override
     public void start(Stage primaryStage) {
-        chatArea = new TextArea();
-        chatArea.setEditable(false);
-        chatArea.setWrapText(true);
-        chatArea.setStyle("-fx-font-family: 'Segoe UI'; -fx-font-size: 14px; -fx-control-inner-background: #F5F5F5;");
+
+        chatBox = new VBox(15);
+        chatBox.setPadding(new Insets(10));
+        chatBox.setStyle("-fx-background-color: #F5F5F5;");
+
+        scrollPane = new ScrollPane(chatBox);
+        scrollPane.setFitToWidth(true); // Чат растягивается по ширине
+        scrollPane.setStyle("-fx-background: #F5F5F5; -fx-border-color: transparent;");
+
+        chatBox.heightProperty().addListener((observable, oldValue, newValue) -> scrollPane.setVvalue(1.0));
 
         inputField = new TextField();
         inputField.setPromptText("Введите сообщение...");
@@ -50,12 +59,12 @@ public class UdpClientFx extends Application {
         HBox bottomPanel = new HBox(10, attachBtn, inputField, sendBtn);
         bottomPanel.setPadding(new Insets(10, 0, 0, 0));
 
-        VBox root = new VBox(chatArea, bottomPanel);
-        VBox.setVgrow(chatArea, Priority.ALWAYS);
+        VBox root = new VBox(scrollPane, bottomPanel);
+        VBox.setVgrow(scrollPane, Priority.ALWAYS);
         root.setPadding(new Insets(15));
         root.setStyle("-fx-background-color: white;");
 
-        Scene scene = new Scene(root, 500, 400);
+        Scene scene = new Scene(root, 500, 600);
         primaryStage.setTitle("UDP Мессенджер");
         primaryStage.setScene(scene);
         primaryStage.setOnCloseRequest(e -> {
@@ -63,6 +72,10 @@ public class UdpClientFx extends Application {
         });
         primaryStage.show();
 
+        initNetwork();
+    }
+
+    private void initNetwork() {
         try {
             socket = new DatagramSocket();
             serverAddress = InetAddress.getByName("127.0.0.1");
@@ -71,9 +84,9 @@ public class UdpClientFx extends Application {
             listenerThread.setDaemon(true);
             listenerThread.start();
 
-            log("Подключено к серверу UDP.");
+            addTextMessage("Система", "Готов к работе. Отправьте первое сообщение, чтобы получать ответы от сервера.", "#888888");
         } catch (Exception e) {
-            log("Ошибка сети: " + e.getMessage());
+            addTextMessage("Система", "Ошибка сети: " + e.getMessage(), "red");
         }
     }
 
@@ -85,10 +98,11 @@ public class UdpClientFx extends Application {
             String payload = "TXT|" + msg;
             byte[] data = payload.getBytes(StandardCharsets.UTF_8);
             socket.send(new DatagramPacket(data, data.length, serverAddress, PORT));
-            log("Вы: " + msg);
+
+            addTextMessage("Вы", msg, "#0084FF");
             inputField.clear();
         } catch (Exception e) {
-            log("Ошибка отправки текста: " + e.getMessage());
+            addTextMessage("Ошибка", e.getMessage(), "red");
         }
     }
 
@@ -98,46 +112,35 @@ public class UdpClientFx extends Application {
         File file = fileChooser.showOpenDialog(stage);
 
         if (file != null) {
-            new Thread(() -> processAndSendFile(file)).start();
+            addImageMessage("Вы", file);
+            new Thread(() -> processAndSendFile(file)).start(); // Отправка на сервер
         }
     }
 
     private void processAndSendFile(File file) {
-        String imageId = UUID.randomUUID().toString().substring(0, 8); // Уникальный ID для картинки
-
+        String imageId = UUID.randomUUID().toString().substring(0, 8);
         try (FileInputStream fis = new FileInputStream(file)) {
             long fileSize = file.length();
             int totalChunks = (int) Math.ceil((double) fileSize / CHUNK_SIZE);
-
-            Platform.runLater(() -> log("Отправка картинки " + file.getName() + " (" + totalChunks + " пакетов)..."));
 
             byte[] buffer = new byte[CHUNK_SIZE];
             int bytesRead;
             int chunkIndex = 0;
 
             while ((bytesRead = fis.read(buffer)) != -1) {
-                // Формируем заголовок: IMG|id|total|index|
                 String header = "IMG|" + imageId + "|" + totalChunks + "|" + chunkIndex + "|";
                 byte[] headerBytes = header.getBytes(StandardCharsets.UTF_8);
 
-                // Объединяем заголовок и реальные байты картинки
                 byte[] packetData = new byte[headerBytes.length + bytesRead];
                 System.arraycopy(headerBytes, 0, packetData, 0, headerBytes.length);
                 System.arraycopy(buffer, 0, packetData, headerBytes.length, bytesRead);
 
-                // Отправляем чанк
-                DatagramPacket packet = new DatagramPacket(packetData, packetData.length, serverAddress, PORT);
-                socket.send(packet);
-
+                socket.send(new DatagramPacket(packetData, packetData.length, serverAddress, PORT));
                 chunkIndex++;
-
-                // Небольшая пауза, чтобы не перегрузить UDP буфер операционной системы и избежать потери пакетов
                 Thread.sleep(5);
             }
-            Platform.runLater(() -> log("Картинка полностью отправлена в сеть."));
-
         } catch (Exception e) {
-            Platform.runLater(() -> log("Ошибка при отправке файла: " + e.getMessage()));
+            addTextMessage("Система", "Ошибка отправки файла: " + e.getMessage(), "red");
         }
     }
 
@@ -151,18 +154,42 @@ public class UdpClientFx extends Application {
                 String reply = new String(packet.getData(), 0, packet.getLength(), StandardCharsets.UTF_8);
                 if (reply.startsWith("TXT|")) {
                     String cleanMsg = reply.substring(4);
-                    Platform.runLater(() -> log("Сервер: " + cleanMsg));
+                    // Сообщения сервера выводим зеленым цветом
+                    addTextMessage("Сервер", cleanMsg, "#28a745");
                 }
             }
         } catch (Exception e) {
             if (!socket.isClosed()) {
-                Platform.runLater(() -> log("Соединение разорвано."));
+                addTextMessage("Система", "Соединение разорвано.", "red");
             }
         }
     }
 
-    private void log(String message) {
-        chatArea.appendText(message + "\n");
+    private void addTextMessage(String sender, String text, String color) {
+        Platform.runLater(() -> {
+            Label label = new Label(sender + ": " + text);
+            label.setWrapText(true);
+            label.setStyle("-fx-font-family: 'Segoe UI'; -fx-font-size: 14px; -fx-text-fill: " + color + ";");
+            chatBox.getChildren().add(label);
+        });
+    }
+
+    private void addImageMessage(String sender, File file) {
+        Platform.runLater(() -> {
+            Label headerLabel = new Label(sender + " отправил(а) изображение:");
+            headerLabel.setStyle("-fx-font-family: 'Segoe UI'; -fx-font-size: 14px; -fx-font-weight: bold; -fx-text-fill: #0084FF;");
+
+            Image img = new Image(file.toURI().toString());
+            ImageView imageView = new ImageView(img);
+
+            imageView.setFitWidth(250);
+            imageView.setPreserveRatio(true);
+
+            VBox imageContainer = new VBox(5, headerLabel, imageView);
+            imageContainer.setStyle("-fx-background-color: #E3F2FD; -fx-padding: 10px; -fx-background-radius: 10px;");
+
+            chatBox.getChildren().add(imageContainer);
+        });
     }
 
     public static void main(String[] args) {

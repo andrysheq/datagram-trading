@@ -3,6 +3,7 @@ module parallelprgrm.cw.datagramtrading {
     requires javafx.fxml;
 
     requires org.kordamp.bootstrapfx.core;
+    requires java.desktop;
 
     opens parallelprgrm.cw.datagramtrading to javafx.fxml;
     exports parallelprgrm.cw.datagramtrading;

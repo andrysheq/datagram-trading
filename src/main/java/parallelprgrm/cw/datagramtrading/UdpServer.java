@@ -1,5 +1,8 @@
 package parallelprgrm.cw.datagramtrading;
 
+import parallelprgrm.cw.datagramtrading.model.Client;
+
+import java.awt.*;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.net.DatagramPacket;
@@ -8,24 +11,30 @@ import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 public class UdpServer {
     private static final int PORT = 9876;
-    private static final int BUFFER_SIZE = 16384; // 16 KB буфер
+    private static final int BUFFER_SIZE = 16384;
 
     private static final Map<String, Map<Integer, byte[]>> imageBuffers = new ConcurrentHashMap<>();
 
+    private static final Set<String> activeClients = ConcurrentHashMap.newKeySet();
+    private static final Map<String, Client> clientNodes = new ConcurrentHashMap<>();
+
     public static void main(String[] args) {
         try (DatagramSocket socket = new DatagramSocket(PORT)) {
-            System.out.println("UDP Сервер запущен на порту " + PORT);
+            System.out.println("UDP Чат-сервер запущен на порту " + PORT);
             byte[] buffer = new byte[BUFFER_SIZE];
 
             while (true) {
                 DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
-                socket.receive(packet); // Блокирующий вызов
+                socket.receive(packet);
 
-                // Копируем только реально полученные байты
+                // Регистрируем клиента, если видим его впервые
+                registerClientIfNotExists(packet);
+
                 byte[] data = Arrays.copyOfRange(packet.getData(), 0, packet.getLength());
                 String header = new String(data, 0, Math.min(data.length, 50), StandardCharsets.UTF_8);
 
@@ -34,7 +43,10 @@ public class UdpServer {
                 if (header.startsWith("TXT|")) {
                     String message = new String(data, 4, data.length - 4, StandardCharsets.UTF_8);
                     System.out.println("Текст от " + clientInfo + ": " + message);
-                    sendReply(socket, packet, "TXT|Сервер получил сообщение");
+
+                    // НОВОЕ: Рассылаем сообщение ВСЕМ остальным клиентам
+                    String broadcastMsg = "TXT|Клиент [" + packet.getPort() + "]: " + message;
+                    broadcastMessage(socket, broadcastMsg, packet.getPort());
                 }
                 else if (header.startsWith("IMG|")) {
                     processImageChunk(data, clientInfo, socket, packet);
@@ -45,21 +57,50 @@ public class UdpServer {
         }
     }
 
+    // --- НОВЫЕ МЕТОДЫ ДЛЯ МАРШРУТИЗАЦИИ ---
+
+    // Запоминаем клиента по его IP и Порту
+    private static void registerClientIfNotExists(DatagramPacket packet) {
+        String key = packet.getAddress().getHostAddress() + ":" + packet.getPort();
+        if (activeClients.add(key)) {
+            clientNodes.put(key, new Client(packet.getAddress(), packet.getPort()));
+            System.out.println("Новый клиент подключился: " + key);
+        }
+    }
+
+    // Рассылка текстового сообщения всем, кроме отправителя
+    private static void broadcastMessage(DatagramSocket socket, String msg, int senderPort) {
+        byte[] replyData = msg.getBytes(StandardCharsets.UTF_8);
+
+        for (Client node : clientNodes.values()) {
+            // Не отправляем сообщение обратно тому, кто его написал (он и так видит его в UI)
+            if (node.getPort() != senderPort) {
+                try {
+                    DatagramPacket packet = new DatagramPacket(replyData, replyData.length, node.getIp(), node.getPort());
+                    socket.send(packet);
+                } catch (Exception e) {
+                    System.err.println("Ошибка рассылки клиенту: " + e.getMessage());
+                }
+            }
+        }
+    }
+
+    // --- СТАРЫЕ МЕТОДЫ ОСТАЮТСЯ БЕЗ ИЗМЕНЕНИЙ ---
+
     private static void processImageChunk(byte[] data, String clientInfo, DatagramSocket socket, DatagramPacket packet) {
+        // ... (ваш старый код processImageChunk без изменений) ...
         try {
-            // Ищем конец заголовка (первый символ | после метаданных)
             int headerEnd = -1;
             int pipeCount = 0;
             for (int i = 0; i < data.length; i++) {
                 if (data[i] == '|') {
                     pipeCount++;
-                    if (pipeCount == 4) { // IMG|id|total|index|
+                    if (pipeCount == 4) {
                         headerEnd = i;
                         break;
                     }
                 }
             }
-
             if (headerEnd == -1) return;
 
             String headerStr = new String(data, 0, headerEnd, StandardCharsets.UTF_8);
@@ -69,53 +110,40 @@ public class UdpServer {
             int totalChunks = Integer.parseInt(parts[2]);
             int chunkIndex = Integer.parseInt(parts[3]);
 
-            // Выделяем сами байты картинки
             byte[] chunkData = Arrays.copyOfRange(data, headerEnd + 1, data.length);
 
-            // Сохраняем фрагмент
             imageBuffers.putIfAbsent(imageId, new HashMap<>());
             imageBuffers.get(imageId).put(chunkIndex, chunkData);
 
-            System.out.println("Получен фрагмент " + chunkIndex + "/" + totalChunks + " картинки " + imageId);
-
-            // Если собрали все фрагменты
             if (imageBuffers.get(imageId).size() == totalChunks) {
                 saveImage(imageId, totalChunks);
-                sendReply(socket, packet, "TXT|Сервер успешно принял и сохранил картинку!");
-                imageBuffers.remove(imageId); // Очищаем память
+                // Оповещаем всех в чате, что кто-то скинул картинку
+                broadcastMessage(socket, "TXT|Клиент [" + packet.getPort() + "] загрузил картинку на сервер!", packet.getPort());
+                imageBuffers.remove(imageId);
             }
         } catch (Exception e) {
-            System.err.println("Ошибка обработки фрагмента картинки: " + e.getMessage());
+            System.err.println("Ошибка обработки фрагмента: " + e.getMessage());
         }
     }
 
     private static void saveImage(String imageId, int totalChunks) {
+        // ... (ваш старый код saveImage с Desktop.getDesktop() без изменений) ...
         String directoryName = "saved";
         File directory = new File(directoryName);
+        if (!directory.exists()) directory.mkdirs();
 
-        // Если папка "saved" не существует, создаем её
-        if (!directory.exists()) {
-            directory.mkdirs();
-        }
+        File imageFile = new File(directoryName + File.separator + "received_" + imageId + ".jpg");
 
-        String filePath = directoryName + File.separator + "received_" + imageId + ".jpg";
-
-        try (FileOutputStream fos = new FileOutputStream(filePath)) {
+        try (FileOutputStream fos = new FileOutputStream(imageFile)) {
             Map<Integer, byte[]> chunks = imageBuffers.get(imageId);
-            for (int i = 0; i < totalChunks; i++) {
-                fos.write(chunks.get(i));
+            for (int i = 0; i < totalChunks; i++) fos.write(chunks.get(i));
+
+            System.out.println("Картинка успешно сохранена!");
+            if (Desktop.isDesktopSupported() && imageFile.exists()) {
+                Desktop.getDesktop().open(imageFile);
             }
-            System.out.println("Картинка " + imageId + " успешно собрана и сохранена в папку '" + directoryName + "'!");
         } catch (Exception e) {
-            System.err.println("Ошибка при сохранении картинки: " + e.getMessage());
             e.printStackTrace();
         }
     }
-
-    private static void sendReply(DatagramSocket socket, DatagramPacket clientPacket, String reply) throws Exception {
-        byte[] replyData = reply.getBytes(StandardCharsets.UTF_8);
-        DatagramPacket packet = new DatagramPacket(replyData, replyData.length, clientPacket.getAddress(), clientPacket.getPort());
-        socket.send(packet);
-    }
 }
-
