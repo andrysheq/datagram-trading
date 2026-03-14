@@ -2,7 +2,6 @@ package parallelprgrm.cw.datagramtrading;
 
 import parallelprgrm.cw.datagramtrading.model.Client;
 
-import java.awt.*;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.net.DatagramPacket;
@@ -32,7 +31,6 @@ public class UdpServer {
                 DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
                 socket.receive(packet);
 
-                // Регистрируем клиента, если видим его впервые
                 registerClientIfNotExists(packet);
 
                 byte[] data = Arrays.copyOfRange(packet.getData(), 0, packet.getLength());
@@ -57,9 +55,6 @@ public class UdpServer {
         }
     }
 
-    // --- НОВЫЕ МЕТОДЫ ДЛЯ МАРШРУТИЗАЦИИ ---
-
-    // Запоминаем клиента по его IP и Порту
     private static void registerClientIfNotExists(DatagramPacket packet) {
         String key = packet.getAddress().getHostAddress() + ":" + packet.getPort();
         if (activeClients.add(key)) {
@@ -68,12 +63,10 @@ public class UdpServer {
         }
     }
 
-    // Рассылка текстового сообщения всем, кроме отправителя
     private static void broadcastMessage(DatagramSocket socket, String msg, int senderPort) {
         byte[] replyData = msg.getBytes(StandardCharsets.UTF_8);
 
         for (Client node : clientNodes.values()) {
-            // Не отправляем сообщение обратно тому, кто его написал (он и так видит его в UI)
             if (node.getPort() != senderPort) {
                 try {
                     DatagramPacket packet = new DatagramPacket(replyData, replyData.length, node.getIp(), node.getPort());
@@ -84,8 +77,6 @@ public class UdpServer {
             }
         }
     }
-
-    // --- СТАРЫЕ МЕТОДЫ ОСТАЮТСЯ БЕЗ ИЗМЕНЕНИЙ ---
 
     private static void processImageChunk(byte[] data, String clientInfo, DatagramSocket socket, DatagramPacket packet) {
         // ... (ваш старый код processImageChunk без изменений) ...
@@ -115,10 +106,10 @@ public class UdpServer {
             imageBuffers.putIfAbsent(imageId, new HashMap<>());
             imageBuffers.get(imageId).put(chunkIndex, chunkData);
 
+            broadcastImageChunk(socket, data, packet.getPort());
+
             if (imageBuffers.get(imageId).size() == totalChunks) {
                 saveImage(imageId, totalChunks);
-                // Оповещаем всех в чате, что кто-то скинул картинку
-                broadcastMessage(socket, "TXT|Клиент [" + packet.getPort() + "] загрузил картинку на сервер!", packet.getPort());
                 imageBuffers.remove(imageId);
             }
         } catch (Exception e) {
@@ -126,8 +117,20 @@ public class UdpServer {
         }
     }
 
+    private static void broadcastImageChunk(DatagramSocket socket, byte[] data, int senderPort) {
+        for (Client node : clientNodes.values()) {
+            if (node.getPort() != senderPort) {
+                try {
+                    DatagramPacket packet = new DatagramPacket(data, data.length, node.getIp(), node.getPort());
+                    socket.send(packet);
+                } catch (Exception e) {
+                    System.err.println("Ошибка рассылки картинки: " + e.getMessage());
+                }
+            }
+        }
+    }
+
     private static void saveImage(String imageId, int totalChunks) {
-        // ... (ваш старый код saveImage с Desktop.getDesktop() без изменений) ...
         String directoryName = "saved";
         File directory = new File(directoryName);
         if (!directory.exists()) directory.mkdirs();
@@ -138,12 +141,10 @@ public class UdpServer {
             Map<Integer, byte[]> chunks = imageBuffers.get(imageId);
             for (int i = 0; i < totalChunks; i++) fos.write(chunks.get(i));
 
-            System.out.println("Картинка успешно сохранена!");
-            if (Desktop.isDesktopSupported() && imageFile.exists()) {
-                Desktop.getDesktop().open(imageFile);
-            }
+            System.out.println("Картинка успешно сохранена на сервере!");
         } catch (Exception e) {
             e.printStackTrace();
         }
     }
+
 }

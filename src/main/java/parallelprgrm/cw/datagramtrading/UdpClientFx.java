@@ -17,7 +17,11 @@ import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetAddress;
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class UdpClientFx extends Application {
     private DatagramSocket socket;
@@ -28,6 +32,7 @@ public class UdpClientFx extends Application {
     private VBox chatBox;
     private ScrollPane scrollPane;
     private TextField inputField;
+    private final Map<String, Map<Integer, byte[]>> receiveImageBuffers = new ConcurrentHashMap<>();
 
     @Override
     public void start(Stage primaryStage) {
@@ -37,7 +42,7 @@ public class UdpClientFx extends Application {
         chatBox.setStyle("-fx-background-color: #F5F5F5;");
 
         scrollPane = new ScrollPane(chatBox);
-        scrollPane.setFitToWidth(true); // Чат растягивается по ширине
+        scrollPane.setFitToWidth(true);
         scrollPane.setStyle("-fx-background: #F5F5F5; -fx-border-color: transparent;");
 
         chatBox.heightProperty().addListener((observable, oldValue, newValue) -> scrollPane.setVvalue(1.0));
@@ -113,7 +118,7 @@ public class UdpClientFx extends Application {
 
         if (file != null) {
             addImageMessage("Вы", file);
-            new Thread(() -> processAndSendFile(file)).start(); // Отправка на сервер
+            new Thread(() -> processAndSendFile(file)).start();
         }
     }
 
@@ -146,16 +151,20 @@ public class UdpClientFx extends Application {
 
     private void listenForReplies() {
         try {
-            byte[] buffer = new byte[1024];
+            byte[] buffer = new byte[CHUNK_SIZE + 256];
             while (!socket.isClosed()) {
                 DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
                 socket.receive(packet);
 
-                String reply = new String(packet.getData(), 0, packet.getLength(), StandardCharsets.UTF_8);
-                if (reply.startsWith("TXT|")) {
-                    String cleanMsg = reply.substring(4);
-                    // Сообщения сервера выводим зеленым цветом
-                    addTextMessage("Сервер", cleanMsg, "#28a745");
+                byte[] data = Arrays.copyOfRange(packet.getData(), 0, packet.getLength());
+                String header = new String(data, 0, Math.min(data.length, 50), StandardCharsets.UTF_8);
+
+                if (header.startsWith("TXT|")) {
+                    String cleanMsg = new String(data, 4, data.length - 4, StandardCharsets.UTF_8);
+                    addTextMessage("Чат", cleanMsg, "#28a745");
+                }
+                else if (header.startsWith("IMG|")) {
+                    processIncomingImageChunk(data);
                 }
             }
         } catch (Exception e) {
@@ -164,6 +173,56 @@ public class UdpClientFx extends Application {
             }
         }
     }
+
+    private void processIncomingImageChunk(byte[] data) {
+        try {
+            int headerEnd = -1;
+            int pipeCount = 0;
+            for (int i = 0; i < data.length; i++) {
+                if (data[i] == '|') {
+                    pipeCount++;
+                    if (pipeCount == 4) {
+                        headerEnd = i;
+                        break;
+                    }
+                }
+            }
+            if (headerEnd == -1) return;
+
+            String headerStr = new String(data, 0, headerEnd, StandardCharsets.UTF_8);
+            String[] parts = headerStr.split("\\|");
+
+            String imageId = parts[1];
+            int totalChunks = Integer.parseInt(parts[2]);
+            int chunkIndex = Integer.parseInt(parts[3]);
+
+            byte[] chunkData = Arrays.copyOfRange(data, headerEnd + 1, data.length);
+
+            receiveImageBuffers.putIfAbsent(imageId, new HashMap<>());
+            receiveImageBuffers.get(imageId).put(chunkIndex, chunkData);
+
+            if (receiveImageBuffers.get(imageId).size() == totalChunks) {
+
+                File tempFile = File.createTempFile("chat_img_" + imageId, ".jpg");
+                tempFile.deleteOnExit();
+
+                try (java.io.FileOutputStream fos = new java.io.FileOutputStream(tempFile)) {
+                    Map<Integer, byte[]> chunks = receiveImageBuffers.get(imageId);
+                    for (int i = 0; i < totalChunks; i++) {
+                        fos.write(chunks.get(i));
+                    }
+                }
+
+                addImageMessage("Собеседник", tempFile);
+
+                // Очищаем память
+                receiveImageBuffers.remove(imageId);
+            }
+        } catch (Exception e) {
+            System.err.println("Ошибка сборки картинки на клиенте: " + e.getMessage());
+        }
+    }
+
 
     private void addTextMessage(String sender, String text, String color) {
         Platform.runLater(() -> {
