@@ -1,5 +1,6 @@
 package parallelprgrm.cw.datagramtrading;
 
+import java.io.File;
 import java.io.FileOutputStream;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
@@ -89,13 +90,24 @@ public class UdpServer {
     }
 
     private static void saveImage(String imageId, int totalChunks) {
-        try (FileOutputStream fos = new FileOutputStream("received_" + imageId + ".jpg")) {
+        String directoryName = "saved";
+        File directory = new File(directoryName);
+
+        // Если папка "saved" не существует, создаем её
+        if (!directory.exists()) {
+            directory.mkdirs();
+        }
+
+        String filePath = directoryName + File.separator + "received_" + imageId + ".jpg";
+
+        try (FileOutputStream fos = new FileOutputStream(filePath)) {
             Map<Integer, byte[]> chunks = imageBuffers.get(imageId);
             for (int i = 0; i < totalChunks; i++) {
                 fos.write(chunks.get(i));
             }
-            System.out.println("Картинка " + imageId + " успешно собрана и сохранена!");
+            System.out.println("Картинка " + imageId + " успешно собрана и сохранена в папку '" + directoryName + "'!");
         } catch (Exception e) {
+            System.err.println("Ошибка при сохранении картинки: " + e.getMessage());
             e.printStackTrace();
         }
     }

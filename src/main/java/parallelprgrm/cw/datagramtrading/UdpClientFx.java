@@ -28,7 +28,6 @@ public class UdpClientFx extends Application {
 
     @Override
     public void start(Stage primaryStage) {
-        // --- Настройка современного UI ---
         chatArea = new TextArea();
         chatArea.setEditable(false);
         chatArea.setWrapText(true);
@@ -64,7 +63,6 @@ public class UdpClientFx extends Application {
         });
         primaryStage.show();
 
-        // --- Инициализация сети ---
         try {
             socket = new DatagramSocket();
             serverAddress = InetAddress.getByName("127.0.0.1");
@@ -100,7 +98,6 @@ public class UdpClientFx extends Application {
         File file = fileChooser.showOpenDialog(stage);
 
         if (file != null) {
-            // Запускаем отправку файла в отдельном потоке, чтобы не заморозить UI (JavaFX)
             new Thread(() -> processAndSendFile(file)).start();
         }
     }
